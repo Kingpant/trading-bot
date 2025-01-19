@@ -1,12 +1,12 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,8 +15,12 @@ import (
 )
 
 type IBitkubApiClient interface {
-	RequestOrderHistories(tokenSymbol string, startTimestamp *uint64) ([]dto.OrderHistory, error)
-	RequestDepositHistories(tokenSymbol string) ([]dto.DepositHistory, error)
+	RequestDepositHistories(ctx context.Context) ([]dto.DepositHistory, error)
+	RequestOrderHistories(
+		ctx context.Context,
+		tokenSymbol string,
+		startTimestamp *uint64,
+	) ([]dto.OrderHistory, error)
 }
 
 type bitkubApiClient struct {
@@ -33,23 +37,19 @@ func NewBitkubApiClient(baseUrl, apiKey, apiSecret string) IBitkubApiClient {
 	}
 }
 
-func (b *bitkubApiClient) RequestDepositHistories(tokenSymbol string) ([]dto.DepositHistory, error) {
-	tokenSymbol = strings.ToLower(tokenSymbol)
+func (b *bitkubApiClient) RequestDepositHistories(
+	ctx context.Context,
+) ([]dto.DepositHistory, error) {
 	page := "1"
 	limit := "100"
 	depositHistories := []dto.DepositHistory{}
 
 	for {
 		depositHistoryPath := "/api/v3/crypto/deposit-history"
-		queryParma := fmt.Sprintf("?sym=%s_thb&p=%s&lmt=%s", tokenSymbol, page, limit)
-
-		body, err := b.httpRequest(depositHistoryPath, queryParma)
-		if err != nil {
-			return nil, err
-		}
+		queryParma := fmt.Sprintf("?p=%s&lmt=%s", page, limit)
 
 		depositHistoryResponse := dto.DepositHistoryResponse{}
-		err = json.Unmarshal(body, &depositHistoryResponse)
+		err := b.httpGetRequest(depositHistoryPath, queryParma, &depositHistoryResponse)
 		if err != nil {
 			return nil, err
 		}
@@ -66,7 +66,11 @@ func (b *bitkubApiClient) RequestDepositHistories(tokenSymbol string) ([]dto.Dep
 	return depositHistories, nil
 }
 
-func (b *bitkubApiClient) RequestOrderHistories(tokenSymbol string, startTimestamp *uint64) ([]dto.OrderHistory, error) {
+func (b *bitkubApiClient) RequestOrderHistories(
+	ctx context.Context,
+	tokenSymbol string,
+	startTimestamp *uint64,
+) ([]dto.OrderHistory, error) {
 	tokenSymbol = strings.ToLower(tokenSymbol)
 	page := "1"
 	limit := "100"
@@ -79,13 +83,8 @@ func (b *bitkubApiClient) RequestOrderHistories(tokenSymbol string, startTimesta
 			queryParma += fmt.Sprintf("&start=%d", *startTimestamp)
 		}
 
-		body, err := b.httpRequest(orderHistoryPath, queryParma)
-		if err != nil {
-			return nil, err
-		}
-
 		orderHistoryResponse := dto.OrderHistoryResponse{}
-		err = json.Unmarshal(body, &orderHistoryResponse)
+		err := b.httpPostRequest(orderHistoryPath, queryParma, &orderHistoryResponse)
 		if err != nil {
 			return nil, err
 		}
@@ -101,7 +100,7 @@ func (b *bitkubApiClient) RequestOrderHistories(tokenSymbol string, startTimesta
 	return orderHistories, nil
 }
 
-func (b *bitkubApiClient) httpRequest(path, queryParam string) ([]byte, error) {
+func (b *bitkubApiClient) httpGetRequest(path, queryParam string, respType interface{}) error {
 	nowMilliSec := time.Now().UnixMilli()
 	nowMilliSecStr := strconv.FormatInt(nowMilliSec, 10)
 	method := "GET"
@@ -110,9 +109,9 @@ func (b *bitkubApiClient) httpRequest(path, queryParam string) ([]byte, error) {
 	signature := b.genSignature(payload)
 
 	client := &http.Client{}
-	req, err := http.NewRequest("GET", b.baseUrl+path+queryParam, nil)
+	req, err := http.NewRequest(method, b.baseUrl+path+queryParam, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	req.Header.Add("X-BTK-TIMESTAMP", nowMilliSecStr)
@@ -121,15 +120,60 @@ func (b *bitkubApiClient) httpRequest(path, queryParam string) ([]byte, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	decodeErr := json.NewDecoder(resp.Body).Decode(respType)
+	if decodeErr != nil {
+		return decodeErr
+	}
+
+	defer resp.Body.Close()
+
+	return nil
+}
+
+func (b *bitkubApiClient) httpPostRequest(
+	path string,
+	queryParam string,
+	respType interface{},
+) error {
+	nowMilliSec := time.Now().UnixMilli()
+	nowMilliSecStr := strconv.FormatInt(nowMilliSec, 10)
+	method := "POST"
+	payload := nowMilliSecStr + method + path + queryParam
+
+	signature := b.genSignature(payload)
+
+	client := &http.Client{}
+	req, err := http.NewRequest(method, b.baseUrl+path+queryParam, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return body, nil
+	req.Header.Add("X-BTK-TIMESTAMP", nowMilliSecStr)
+	req.Header.Add("X-BTK-APIKEY", b.apiKey)
+	req.Header.Add("X-BTK-SIGN", signature)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	decodeErr := json.NewDecoder(resp.Body).Decode(respType)
+	if decodeErr != nil {
+		return decodeErr
+	}
+
+	defer resp.Body.Close()
+
+	return nil
 }
 
 func (b *bitkubApiClient) genSignature(payload string) string {

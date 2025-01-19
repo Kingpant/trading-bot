@@ -2,4 +2,12 @@
     "[go]": {
         "editor.formatOnSave": true,
     },
+    "emeraldwalk.runonsave": {
+        "commands": [
+            {
+                "match": "\\.go$",
+                "cmd": "golines ${file} -w"
+            }
+        ]
+    }
 }

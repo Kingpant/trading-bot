@@ -24,37 +24,37 @@ func NewBinanceAPI(baseURL string) IBinanceAPI {
 }
 
 func (b *binanceAPI) Ping(ctx context.Context) error {
-	_, pingErr := b.sendGetRequest(ctx, "/fapi/v1/ping", nil)
+	pingErr := b.sendGetRequest(ctx, "/fapi/v1/ping", nil)
 	return pingErr
 }
 
 func (b *binanceAPI) CheckServerTime(ctx context.Context) (*dto.CheckServerTimeResponse, error) {
 	var resp dto.CheckServerTimeResponse
-	_, checkServerTimeErr := b.sendGetRequest(ctx, "/fapi/v1/time", &resp)
+	checkServerTimeErr := b.sendGetRequest(ctx, "/fapi/v1/time", &resp)
 	return &resp, checkServerTimeErr
 }
 
-func (b *binanceAPI) sendGetRequest(ctx context.Context, path string, respType interface{}) (*http.Response, error) {
+func (b *binanceAPI) sendGetRequest(ctx context.Context, path string, respType interface{}) error {
 	req, newRequestErr := http.NewRequestWithContext(ctx, http.MethodGet, b.BaseURL+path, nil)
 	if newRequestErr != nil {
-		return nil, newRequestErr
+		return newRequestErr
 	}
 
 	resp, doErr := http.DefaultClient.Do(req)
 	if doErr != nil {
-		return nil, doErr
+		return doErr
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	decodeErr := json.NewDecoder(resp.Body).Decode(respType)
+	if decodeErr != nil {
+		return decodeErr
 	}
 
 	defer resp.Body.Close()
 
-	decodeErr := json.NewDecoder(resp.Body).Decode(respType)
-	if decodeErr != nil {
-		return nil, decodeErr
-	}
-
-	return resp, nil
+	return nil
 }

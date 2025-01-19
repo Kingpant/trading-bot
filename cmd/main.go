@@ -26,11 +26,10 @@ func main() {
 
 	bitkubAPIClient := api.NewBitkubApiClient(cfg.BitkubBaseURL, cfg.BitkubAPIKey, cfg.BitkubAPISecret)
 
-	_ = bitkub.NewBitkubModule(bitkubAPIClient)
-
-	gracefulShutdown(ctxCancel, logger)
+	_ = bitkub.NewBitkubModule(bitkubAPIClient, logger)
 
 	logger.Info("App started")
+	gracefulShutdown(ctxCancel, logger)
 }
 
 func gracefulShutdown(ctxCancel context.CancelFunc, logger *logrus.Logger) {
